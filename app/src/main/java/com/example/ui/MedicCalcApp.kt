@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.LightMode
 import androidx.compose.material.icons.outlined.MonitorWeight
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Vaccines
 import androidx.compose.material.icons.outlined.WaterDrop
 import androidx.compose.material.icons.rounded.Air
@@ -52,6 +53,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -71,6 +73,8 @@ import com.example.ui.screens.DripScreen
 import com.example.ui.screens.GcsScreen
 import com.example.ui.screens.IbwScreen
 import com.example.ui.screens.OxygenScreen
+import com.example.ui.screens.SettingsProtocolCategory
+import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.SyringeScreen
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.MedicCalcTheme
@@ -84,12 +88,34 @@ fun MedicCalcApp(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
+    val mainScrollState = rememberScrollState()
+
+    LaunchedEffect(uiState.activeTab) {
+        mainScrollState.scrollTo(0)
+    }
 
     MedicCalcTheme(darkTheme = uiState.isNightMode) {
-        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val useNavigationRail = maxWidth >= 600.dp
+        if (uiState.showSettings) {
+            SettingsScreen(
+                dripPresets = uiState.drip.presets,
+                syringePresets = uiState.syringe.presets,
+                initialCategory = if (uiState.activeTab == MedicTab.SYRINGE) {
+                    SettingsProtocolCategory.SYRINGE
+                } else {
+                    SettingsProtocolCategory.DRIPS
+                },
+                onSaveDrip = viewModel::saveDripProtocol,
+                onDeleteDrip = viewModel::deleteDripProtocol,
+                onSaveSyringe = viewModel::saveSyringeProtocol,
+                onDeleteSyringe = viewModel::deleteSyringeProtocol,
+                onResetDefaults = viewModel::resetProtocolsToDefaults,
+                onBack = { viewModel.setShowSettings(false) }
+            )
+        } else {
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val useNavigationRail = maxWidth >= 600.dp
 
-            Scaffold(
+                Scaffold(
                 modifier = Modifier.fillMaxSize(),
                 contentWindowInsets = WindowInsets.safeDrawing,
                 containerColor = MaterialTheme.colorScheme.background,
@@ -150,6 +176,15 @@ fun MedicCalcApp(
                                         Icons.Outlined.DarkMode
                                     },
                                     contentDescription = stringResource(R.string.toggle_night_mode)
+                                )
+                            }
+                            IconButton(
+                                onClick = { viewModel.setShowSettings(true) },
+                                modifier = Modifier.testTag("action_settings")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Settings,
+                                    contentDescription = stringResource(R.string.open_protocol_settings)
                                 )
                             }
                             IconButton(
@@ -239,7 +274,7 @@ fun MedicCalcApp(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
-                            .verticalScroll(rememberScrollState()),
+                            .verticalScroll(mainScrollState),
                         contentAlignment = Alignment.TopCenter
                     ) {
                         Column(
@@ -262,10 +297,16 @@ fun MedicCalcApp(
                                     onWeightUnitChange = viewModel::setDripWeightUnit,
                                     onDesiredDoseChange = viewModel::setDripDesiredDose,
                                     onDoseRateUnitChange = viewModel::setDripDoseRateUnit,
+                                    onConcentrationModeChange = viewModel::setDripConcentrationMode,
+                                    onConcentrationPerMlChange = viewModel::setDripConcentrationPerMl,
+                                    onConcentrationUnitChange = viewModel::setDripConcentrationUnit,
+                                    onQuickConcentrationSelect = viewModel::selectDripQuickConcentration,
                                     onDrugAmountChange = viewModel::setDripDrugAmount,
                                     onDrugUnitChange = viewModel::setDripDrugUnit,
                                     onBagVolumeChange = viewModel::setDripBagVolume,
                                     onApplyPreset = viewModel::applyDripPreset,
+                                    onClearPreset = viewModel::clearDripPresetSelection,
+                                    onOpenSettings = { viewModel.setShowSettings(true) },
                                     onToggleMetronome = viewModel::toggleDripMetronome,
                                     onTapDrip = { viewModel.recordDripTap() },
                                     onResetTap = viewModel::resetDripTap
@@ -287,10 +328,16 @@ fun MedicCalcApp(
                                     onWeightUnitChange = viewModel::setSyringeWeightUnit,
                                     onDesiredDoseChange = viewModel::setSyringeDesiredDose,
                                     onDesiredUnitChange = viewModel::setSyringeDesiredUnit,
+                                    onConcentrationModeChange = viewModel::setSyringeConcentrationMode,
+                                    onConcentrationPerMlChange = viewModel::setSyringeConcentrationPerMl,
+                                    onConcentrationUnitChange = viewModel::setSyringeConcentrationUnit,
+                                    onQuickConcentrationSelect = viewModel::selectSyringeQuickConcentration,
                                     onDrugOnHandChange = viewModel::setSyringeDrugOnHand,
                                     onOnHandUnitChange = viewModel::setSyringeOnHandUnit,
                                     onVolumeOnHandChange = viewModel::setSyringeVolumeOnHand,
-                                    onApplyPreset = viewModel::applySyringePreset
+                                    onApplyPreset = viewModel::applySyringePreset,
+                                    onClearPreset = viewModel::clearSyringePresetSelection,
+                                    onOpenSettings = { viewModel.setShowSettings(true) }
                                 )
 
                                 MedicTab.IBW -> IbwScreen(
@@ -330,6 +377,7 @@ fun MedicCalcApp(
                 )
             }
         }
+        }
     }
 }
 
@@ -362,6 +410,7 @@ private fun ClinicalFormulaDialog(onDismiss: () -> Unit) {
                 FormulaLine("Syringe", "mL = Desired Dose ÷ (Drug ÷ mL)")
                 FormulaLine("Devine IBW", "M: 50 + 2.3×(in−60) | F: 45.5 + 2.3×(in−60)")
                 FormulaLine("GCS Score", "E(1–4) + V(1–5) + M(1–6) | Mild ≥13, Mod 9–12, Sev ≤8")
+                FormulaLine("Dose Ranges", "Air Methods PCG Rev 10 (11/03/2023) Adult & Peds")
             }
         },
         confirmButton = {

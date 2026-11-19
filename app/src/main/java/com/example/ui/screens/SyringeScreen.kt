@@ -4,21 +4,28 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -28,6 +35,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.example.domain.DoseRangeStatus
 import com.example.domain.MedicMath
 import com.example.domain.MedicationUnit
 import com.example.domain.SyringePreset
@@ -36,9 +44,13 @@ import com.example.ui.SyringeUiState
 import com.example.ui.components.ClinicalSectionCard
 import com.example.ui.components.HeroResultCard
 import com.example.ui.components.MedicNumericField
+import com.example.ui.components.ProtocolDoseBanner
 import com.example.ui.components.SegmentedChoiceRow
 import com.example.ui.components.SelectablePillChip
+import com.example.ui.theme.JetBrainsMonoFontFamily
+import com.example.ui.theme.LocalClinicalStatusColors
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SyringeScreen(
     state: SyringeUiState,
@@ -47,10 +59,16 @@ fun SyringeScreen(
     onWeightUnitChange: (WeightUnit) -> Unit,
     onDesiredDoseChange: (String) -> Unit,
     onDesiredUnitChange: (MedicationUnit) -> Unit,
+    onConcentrationModeChange: (Boolean) -> Unit,
+    onConcentrationPerMlChange: (String) -> Unit,
+    onConcentrationUnitChange: (MedicationUnit) -> Unit,
+    onQuickConcentrationSelect: (String, MedicationUnit) -> Unit,
     onDrugOnHandChange: (String) -> Unit,
     onOnHandUnitChange: (MedicationUnit) -> Unit,
     onVolumeOnHandChange: (String) -> Unit,
     onApplyPreset: (SyringePreset) -> Unit,
+    onClearPreset: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val result = state.result
@@ -61,42 +79,100 @@ fun SyringeScreen(
     ) {
         // Common EMS Vial Presets
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                text = "COMMON EMS VIALS",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.Bold
-            )
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                MedicMath.SYRINGE_PRESETS.forEach { preset ->
-                    SelectablePillChip(
-                        label = preset.name,
-                        subLabel = preset.detail,
-                        selected = false,
-                        onClick = { onApplyPreset(preset) },
-                        testTag = "syringe_preset_${preset.name.lowercase()}"
-                    )
+                Text(
+                    text = "PROTOCOL VIALS",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Customize",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onOpenSettings() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .testTag("syringe_customize_protocols")
+                )
+            }
+            if (state.presets.isEmpty()) {
+                SelectablePillChip(
+                    label = "+ Add Vial Protocol",
+                    subLabel = "Open Settings",
+                    selected = false,
+                    onClick = onOpenSettings,
+                    testTag = "syringe_empty_add_chip"
+                )
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    state.presets.forEach { preset ->
+                        val isSelected = (state.selectedPresetId != null && state.selectedPresetId == preset.id) ||
+                            (state.selectedPresetId == null && state.selectedPresetName == preset.name)
+                        SelectablePillChip(
+                            label = preset.name,
+                            subLabel = preset.detail,
+                            selected = isSelected,
+                            onClick = { onApplyPreset(preset) },
+                            testTag = "syringe_preset_${preset.name.lowercase()}"
+                        )
+                    }
                 }
             }
         }
 
+        AnimatedVisibility(visible = state.protocolValidation != null) {
+            state.protocolValidation?.let { validation ->
+                ProtocolDoseBanner(
+                    validation = validation,
+                    onDismiss = onClearPreset,
+                    testTag = "syringe_protocol_banner"
+                )
+            }
+        }
+
         // Hero Result Card + Visual Syringe Barrel
+        val statusColors = LocalClinicalStatusColors.current
+        val validation = state.protocolValidation
+        val isProtocolCritical = validation?.status == DoseRangeStatus.ABOVE_MAX ||
+            validation?.status == DoseRangeStatus.MAX_SINGLE_EXCEEDED
+        val isProtocolCaution = validation?.status == DoseRangeStatus.BELOW_MIN
+        val heroAccent = when {
+            isProtocolCritical -> statusColors.critical
+            isProtocolCaution -> statusColors.caution
+            else -> MaterialTheme.colorScheme.primary
+        }
+        val protocolWarning = if (isProtocolCritical || isProtocolCaution) validation?.message else null
+        val combinedWarning = listOfNotNull(protocolWarning, result?.warning)
+            .distinct()
+            .joinToString("\n")
+            .ifEmpty { null }
+
         HeroResultCard(
             label = "Volume to Draw Up",
             primaryValue = result?.takeIf { it.error == null }?.let {
                 MedicMath.formatNumber(it.volumeToDrawMl, 2)
             } ?: "--",
             primaryUnit = "mL",
+            accentColor = heroAccent,
             subtitle = result?.takeIf { it.error == null }?.let {
                 "Use ${it.recommendedSyringeMl} mL syringe"
             },
             errorText = result?.error,
-            warningText = result?.warning,
+            warningText = combinedWarning,
+            isCriticalWarning = isProtocolCritical,
             metrics = listOf(
                 "Total Dose" to (result?.totalDoseFormatted ?: "--"),
                 "Vial Conc." to (result?.concentrationFormatted ?: "--"),
@@ -188,28 +264,85 @@ fun SyringeScreen(
 
         // Vial Concentration on Hand Section
         ClinicalSectionCard(title = "Vial / Ampule on Hand") {
-            MedicNumericField(
-                value = state.drugOnHand,
-                onValueChange = onDrugOnHandChange,
-                label = "Total Drug in Vial",
-                unitSuffix = state.onHandUnit.label,
-                testTag = "syringe_drug_on_hand_input",
-                imeAction = ImeAction.Next
+            SegmentedChoiceRow(
+                options = listOf(true, false),
+                selected = state.isConcentrationMode,
+                onSelect = onConcentrationModeChange,
+                labelProvider = { if (it) "Conc. (/mL)" else "Total Drug" },
+                testTagPrefix = "syringe_conc_mode"
             )
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                MedicationUnit.entries.forEach { unit ->
-                    SelectablePillChip(
-                        label = unit.label,
-                        selected = state.onHandUnit == unit,
-                        onClick = { onOnHandUnitChange(unit) },
-                        testTag = "syringe_vial_unit_${unit.label.lowercase()}"
-                    )
+            if (state.isConcentrationMode) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(
+                        Triple("50", MedicationUnit.MCG, "50 mcg/mL"),
+                        Triple("1", MedicationUnit.MG, "1 mg/mL"),
+                        Triple("2", MedicationUnit.MG, "2 mg/mL"),
+                        Triple("5", MedicationUnit.MG, "5 mg/mL"),
+                        Triple("10", MedicationUnit.MG, "10 mg/mL"),
+                        Triple("50", MedicationUnit.MG, "50 mg/mL")
+                    ).forEach { (amount, unit, label) ->
+                        SelectablePillChip(
+                            label = label,
+                            selected = state.concentrationPerMl == amount && state.concentrationUnit == unit,
+                            onClick = { onQuickConcentrationSelect(amount, unit) },
+                            testTag = "syringe_quick_conc_${amount}_${unit.label.lowercase()}"
+                        )
+                    }
+                }
+
+                MedicNumericField(
+                    value = state.concentrationPerMl,
+                    onValueChange = onConcentrationPerMlChange,
+                    label = "Vial Concentration",
+                    unitSuffix = "${state.concentrationUnit.label}/mL",
+                    testTag = "syringe_conc_input",
+                    imeAction = ImeAction.Next
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    MedicationUnit.entries.forEach { unit ->
+                        SelectablePillChip(
+                            label = "${unit.label}/mL",
+                            selected = state.concentrationUnit == unit,
+                            onClick = { onConcentrationUnitChange(unit) },
+                            testTag = "syringe_conc_unit_${unit.label.lowercase()}"
+                        )
+                    }
+                }
+            } else {
+                MedicNumericField(
+                    value = state.drugOnHand,
+                    onValueChange = onDrugOnHandChange,
+                    label = "Total Drug in Vial",
+                    unitSuffix = state.onHandUnit.label,
+                    testTag = "syringe_drug_on_hand_input",
+                    imeAction = ImeAction.Next
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    MedicationUnit.entries.forEach { unit ->
+                        SelectablePillChip(
+                            label = unit.label,
+                            selected = state.onHandUnit == unit,
+                            onClick = { onOnHandUnitChange(unit) },
+                            testTag = "syringe_vial_unit_${unit.label.lowercase()}"
+                        )
+                    }
                 }
             }
 
@@ -220,6 +353,33 @@ fun SyringeScreen(
                 unitSuffix = "mL",
                 testTag = "syringe_vial_volume_input"
             )
+
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("1", "2", "5", "10", "20").forEach { vol ->
+                    SelectablePillChip(
+                        label = "$vol mL",
+                        selected = state.volumeOnHandMl == vol,
+                        onClick = { onVolumeOnHandChange(vol) },
+                        testTag = "syringe_vial_vol_$vol"
+                    )
+                }
+            }
+
+            if (state.isConcentrationMode && state.drugOnHand.isNotEmpty() && state.volumeOnHandMl.isNotEmpty()) {
+                Text(
+                    text = "Vial Total: ${state.drugOnHand} ${state.onHandUnit.label} in ${state.volumeOnHandMl} mL",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontFamily = JetBrainsMonoFontFamily
+                    ),
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.testTag("syringe_vial_total_summary")
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(8.dp))

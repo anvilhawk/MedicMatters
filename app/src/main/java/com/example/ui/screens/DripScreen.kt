@@ -11,6 +11,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -51,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.example.domain.DoseRateUnit
+import com.example.domain.DoseRangeStatus
 import com.example.domain.DripMode
 import com.example.domain.DripPreset
 import com.example.domain.MedicMath
@@ -61,11 +64,14 @@ import com.example.ui.DripUiState
 import com.example.ui.components.ClinicalSectionCard
 import com.example.ui.components.HeroResultCard
 import com.example.ui.components.MedicNumericField
+import com.example.ui.components.ProtocolDoseBanner
 import com.example.ui.components.SegmentedChoiceRow
 import com.example.ui.components.SelectablePillChip
 import com.example.ui.theme.JetBrainsMonoFontFamily
+import com.example.ui.theme.LocalClinicalStatusColors
 import kotlinx.coroutines.delay
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DripScreen(
     state: DripUiState,
@@ -80,10 +86,16 @@ fun DripScreen(
     onWeightUnitChange: (WeightUnit) -> Unit,
     onDesiredDoseChange: (String) -> Unit,
     onDoseRateUnitChange: (DoseRateUnit) -> Unit,
+    onConcentrationModeChange: (Boolean) -> Unit,
+    onConcentrationPerMlChange: (String) -> Unit,
+    onConcentrationUnitChange: (MedicationUnit) -> Unit,
+    onQuickConcentrationSelect: (String, MedicationUnit) -> Unit,
     onDrugAmountChange: (String) -> Unit,
     onDrugUnitChange: (MedicationUnit) -> Unit,
     onBagVolumeChange: (String) -> Unit,
     onApplyPreset: (DripPreset) -> Unit,
+    onClearPreset: () -> Unit,
+    onOpenSettings: () -> Unit,
     onToggleMetronome: () -> Unit,
     onTapDrip: () -> Unit,
     onResetTap: () -> Unit,
@@ -131,31 +143,87 @@ fun DripScreen(
     ) {
         // Quick EMS Drip Presets
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                text = "COMMON EMS DRIPS",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.Bold
-            )
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                MedicMath.DRIP_PRESETS.forEach { preset ->
-                    SelectablePillChip(
-                        label = preset.name,
-                        subLabel = preset.subtitle,
-                        selected = false,
-                        onClick = { onApplyPreset(preset) },
-                        testTag = "drip_preset_${preset.name.lowercase()}"
-                    )
+                Text(
+                    text = "PROTOCOL DRIPS",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Customize",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onOpenSettings() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .testTag("drip_customize_protocols")
+                )
+            }
+            if (state.presets.isEmpty()) {
+                SelectablePillChip(
+                    label = "+ Add Drip Protocol",
+                    subLabel = "Open Settings",
+                    selected = false,
+                    onClick = onOpenSettings,
+                    testTag = "drip_empty_add_chip"
+                )
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    state.presets.forEach { preset ->
+                        val isSelected = (state.selectedPresetId != null && state.selectedPresetId == preset.id) ||
+                            (state.selectedPresetId == null && state.selectedPresetName == preset.name)
+                        SelectablePillChip(
+                            label = preset.name,
+                            subLabel = preset.subtitle,
+                            selected = isSelected,
+                            onClick = { onApplyPreset(preset) },
+                            testTag = "drip_preset_${preset.name.lowercase()}"
+                        )
+                    }
                 }
             }
         }
 
+        AnimatedVisibility(visible = state.protocolValidation != null) {
+            state.protocolValidation?.let { validation ->
+                ProtocolDoseBanner(
+                    validation = validation,
+                    onDismiss = onClearPreset,
+                    testTag = "drip_protocol_banner"
+                )
+            }
+        }
+
         // Hero Result Card + Visual Drip Beat & Tap-to-Count
+        val statusColors = LocalClinicalStatusColors.current
+        val validation = state.protocolValidation
+        val isProtocolCritical = validation?.status == DoseRangeStatus.ABOVE_MAX ||
+            validation?.status == DoseRangeStatus.MAX_SINGLE_EXCEEDED
+        val isProtocolCaution = validation?.status == DoseRangeStatus.BELOW_MIN
+        val heroAccent = when {
+            isProtocolCritical -> statusColors.critical
+            isProtocolCaution -> statusColors.caution
+            else -> MaterialTheme.colorScheme.primary
+        }
+        val protocolWarning = if (isProtocolCritical || isProtocolCaution) validation?.message else null
+        val combinedWarning = listOfNotNull(protocolWarning, result?.warning)
+            .distinct()
+            .joinToString("\n")
+            .ifEmpty { null }
+
         val secPerDropStr = result?.secondsPerDrop?.let { sec ->
             if (sec >= 1.0) "${MedicMath.formatNumber(sec, 2)} s" else "< 1 s"
         } ?: "--"
@@ -176,11 +244,13 @@ fun DripScreen(
                 else "${it.roundedGttPerMinute}"
             } ?: "--",
             primaryUnit = "gtt/min",
+            accentColor = heroAccent,
             subtitle = result?.let {
                 if (it.warning?.startsWith("Unit mismatch") == true) null
                 else "Exact ${MedicMath.formatNumber(it.gttPerMinute, 1)} gtt/min · ${state.effectiveDropFactor ?: "--"} gtt/mL"
             },
-            warningText = result?.warning,
+            warningText = combinedWarning,
+            isCriticalWarning = isProtocolCritical,
             metrics = metricsList,
             modifier = Modifier.testTag("drip_result_card")
         ) {
@@ -433,34 +503,96 @@ fun DripScreen(
                 }
 
                 ClinicalSectionCard(title = "IV Bag Concentration") {
-                    MedicNumericField(
-                        value = state.drugAmount,
-                        onValueChange = onDrugAmountChange,
-                        label = "Drug Added to Bag",
-                        unitSuffix = state.drugUnit.label,
-                        testTag = "drip_drug_amount_input",
-                        imeAction = ImeAction.Next
+                    SegmentedChoiceRow(
+                        options = listOf(true, false),
+                        selected = state.isConcentrationMode,
+                        onSelect = onConcentrationModeChange,
+                        labelProvider = { if (it) "Conc. (/mL)" else "Total Drug" },
+                        testTagPrefix = "drip_conc_mode"
                     )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        listOf(
-                            MedicationUnit.MCG,
-                            MedicationUnit.MG,
-                            MedicationUnit.G,
-                            MedicationUnit.UNITS
-                        ).forEach { unit ->
-                            SelectablePillChip(
-                                label = unit.label,
-                                selected = state.drugUnit == unit,
-                                onClick = { onDrugUnitChange(unit) },
-                                testTag = "drip_bag_unit_${unit.label.lowercase()}"
-                            )
+
+                    if (state.isConcentrationMode) {
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                Triple("200", MedicationUnit.MCG, "200 mcg/mL"),
+                                Triple("400", MedicationUnit.MCG, "400 mcg/mL"),
+                                Triple("1", MedicationUnit.MG, "1 mg/mL"),
+                                Triple("4", MedicationUnit.MG, "4 mg/mL"),
+                                Triple("10", MedicationUnit.MG, "10 mg/mL")
+                            ).forEach { (amount, unit, label) ->
+                                SelectablePillChip(
+                                    label = label,
+                                    selected = state.concentrationPerMl == amount && state.concentrationUnit == unit,
+                                    onClick = { onQuickConcentrationSelect(amount, unit) },
+                                    testTag = "drip_quick_conc_${amount}_${unit.label.lowercase()}"
+                                )
+                            }
+                        }
+
+                        MedicNumericField(
+                            value = state.concentrationPerMl,
+                            onValueChange = onConcentrationPerMlChange,
+                            label = "Bag Concentration",
+                            unitSuffix = "${state.concentrationUnit.label}/mL",
+                            testTag = "drip_conc_input",
+                            imeAction = ImeAction.Next
+                        )
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                MedicationUnit.MCG,
+                                MedicationUnit.MG,
+                                MedicationUnit.G,
+                                MedicationUnit.UNITS
+                            ).forEach { unit ->
+                                SelectablePillChip(
+                                    label = "${unit.label}/mL",
+                                    selected = state.concentrationUnit == unit,
+                                    onClick = { onConcentrationUnitChange(unit) },
+                                    testTag = "drip_conc_unit_${unit.label.lowercase()}"
+                                )
+                            }
+                        }
+                    } else {
+                        MedicNumericField(
+                            value = state.drugAmount,
+                            onValueChange = onDrugAmountChange,
+                            label = "Drug Added to Bag",
+                            unitSuffix = state.drugUnit.label,
+                            testTag = "drip_drug_amount_input",
+                            imeAction = ImeAction.Next
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                MedicationUnit.MCG,
+                                MedicationUnit.MG,
+                                MedicationUnit.G,
+                                MedicationUnit.UNITS
+                            ).forEach { unit ->
+                                SelectablePillChip(
+                                    label = unit.label,
+                                    selected = state.drugUnit == unit,
+                                    onClick = { onDrugUnitChange(unit) },
+                                    testTag = "drip_bag_unit_${unit.label.lowercase()}"
+                                )
+                            }
                         }
                     }
+
                     MedicNumericField(
                         value = state.bagVolumeMl,
                         onValueChange = onBagVolumeChange,
@@ -468,17 +600,43 @@ fun DripScreen(
                         unitSuffix = "mL",
                         testTag = "drip_bag_volume_input"
                     )
+
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("50", "100", "250", "500", "1000").forEach { vol ->
+                            SelectablePillChip(
+                                label = "$vol mL",
+                                selected = state.bagVolumeMl == vol,
+                                onClick = { onBagVolumeChange(vol) },
+                                testTag = "drip_bag_vol_$vol"
+                            )
+                        }
+                    }
+
+                    if (state.isConcentrationMode && state.drugAmount.isNotEmpty() && state.bagVolumeMl.isNotEmpty()) {
+                        Text(
+                            text = "Mix Total: ${state.drugAmount} ${state.drugUnit.label} in ${state.bagVolumeMl} mL",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontFamily = JetBrainsMonoFontFamily
+                            ),
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.testTag("drip_mix_total_summary")
+                        )
+                    }
                 }
             }
         }
 
         // Tubing Drop Factor Card
         ClinicalSectionCard(title = "IV Tubing Drop Factor (gtt/mL)") {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 MedicMath.STANDARD_DROP_FACTORS.forEach { factor ->
                     val label = if (factor == 60) "60 (Micro)" else "$factor"

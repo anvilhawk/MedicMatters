@@ -12,4 +12,6 @@
     <string name="action_use_ibw">Use IBW</string>
     <string name="toggle_night_mode">Toggle Night Shift Mode</string>
     <string name="open_clinical_info">Clinical Formula Reference</string>
+    <string name="open_protocol_settings">Protocol Settings</string>
+    <string name="settings_title">Protocol Settings</string>
 </resources>

@@ -20,7 +20,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.WarningAmber
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,6 +47,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.domain.DoseRangeStatus
+import com.example.domain.ProtocolDoseValidation
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.LocalClinicalStatusColors
 
@@ -96,6 +101,7 @@ fun HeroResultCard(
     accentColor: Color = MaterialTheme.colorScheme.primary,
     subtitle: String? = null,
     warningText: String? = null,
+    isCriticalWarning: Boolean = false,
     errorText: String? = null,
     metrics: List<Pair<String, String>> = emptyList(),
     extraContent: @Composable (() -> Unit)? = null
@@ -232,14 +238,15 @@ fun HeroResultCard(
                     }
 
                     if (warningText != null) {
+                        val warnColor = if (isCriticalWarning) statusColors.critical else statusColors.caution
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(10.dp))
-                                .background(statusColors.caution.copy(alpha = 0.14f))
+                                .background(warnColor.copy(alpha = 0.14f))
                                 .border(
                                     1.dp,
-                                    statusColors.caution.copy(alpha = 0.35f),
+                                    warnColor.copy(alpha = 0.45f),
                                     RoundedCornerShape(10.dp)
                                 )
                                 .padding(10.dp),
@@ -247,15 +254,16 @@ fun HeroResultCard(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.WarningAmber,
-                                contentDescription = "Clinical Caution",
-                                tint = statusColors.caution,
+                                imageVector = if (isCriticalWarning) Icons.Rounded.ErrorOutline else Icons.Rounded.WarningAmber,
+                                contentDescription = if (isCriticalWarning) "Dose Alert" else "Clinical Caution",
+                                tint = warnColor,
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
                                 text = warningText,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = if (isCriticalWarning) FontWeight.SemiBold else FontWeight.Normal
                             )
                         }
                     }
@@ -437,6 +445,256 @@ fun SelectablePillChip(
                     },
                     maxLines = 1
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun ProtocolDoseBanner(
+    validation: ProtocolDoseValidation,
+    modifier: Modifier = Modifier,
+    onDismiss: (() -> Unit)? = null,
+    testTag: String = "protocol_dose_banner"
+) {
+    val statusColors = LocalClinicalStatusColors.current
+    val statusColor = when (validation.status) {
+        DoseRangeStatus.WITHIN_RANGE -> statusColors.safe
+        DoseRangeStatus.BELOW_MIN -> statusColors.caution
+        DoseRangeStatus.ABOVE_MAX, DoseRangeStatus.MAX_SINGLE_EXCEEDED -> statusColors.critical
+        DoseRangeStatus.INFO_ONLY -> MaterialTheme.colorScheme.primary
+    }
+    val statusIcon = when (validation.status) {
+        DoseRangeStatus.WITHIN_RANGE -> Icons.Rounded.CheckCircle
+        DoseRangeStatus.BELOW_MIN -> Icons.Rounded.WarningAmber
+        DoseRangeStatus.ABOVE_MAX, DoseRangeStatus.MAX_SINGLE_EXCEEDED -> Icons.Rounded.ErrorOutline
+        DoseRangeStatus.INFO_ONLY -> Icons.Rounded.Info
+    }
+    val statusHeading = when (validation.status) {
+        DoseRangeStatus.WITHIN_RANGE -> "IN PROTOCOL RANGE"
+        DoseRangeStatus.BELOW_MIN -> "LOW DOSE CAUTION"
+        DoseRangeStatus.ABOVE_MAX -> "EXCEEDS PROTOCOL MAX"
+        DoseRangeStatus.MAX_SINGLE_EXCEEDED -> "MAX SINGLE DOSE EXCEEDED"
+        DoseRangeStatus.INFO_ONLY -> if (validation.pcgSection.equals("Custom", ignoreCase = true)) {
+            "CUSTOM / GENERIC"
+        } else {
+            "PROTOCOL REFERENCE"
+        }
+    }
+
+    val isCustomGeneric = validation.pcgSection.equals("Custom", ignoreCase = true)
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag(testTag),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 2.dp,
+        border = BorderStroke(
+            width = if (validation.status == DoseRangeStatus.WITHIN_RANGE || validation.status == DoseRangeStatus.INFO_ONLY) 1.dp else 1.5.dp,
+            color = statusColor.copy(alpha = 0.55f)
+        )
+    ) {
+        if (isCustomGeneric) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Info,
+                    contentDescription = "Custom / Generic",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "CUSTOM / GENERIC",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Select concentration (/mL or total) & volume below · No protocol limits",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (onDismiss != null) {
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .size(32.dp)
+                            .testTag("${testTag}_dismiss")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Clear protocol selection",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = validation.medName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (validation.pcgSection.isNotBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                            ) {
+                                Text(
+                                    text = validation.pcgSection,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontFamily = JetBrainsMonoFontFamily
+                                    ),
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                    if (onDismiss != null) {
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .size(32.dp)
+                                .testTag("${testTag}_dismiss")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = "Clear protocol selection",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Average & Normal Protocol Dose Range summary
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            text = "Avg Dose",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.width(86.dp)
+                        )
+                        Text(
+                            text = validation.averageDoseSummary,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontFamily = JetBrainsMonoFontFamily
+                            ),
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(
+                            text = "Normal Range",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.width(86.dp)
+                        )
+                        Text(
+                            text = validation.normalRangeSummary,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontFamily = JetBrainsMonoFontFamily
+                            ),
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                if (!validation.notes.isNullOrBlank()) {
+                    Text(
+                        text = validation.notes,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Live Dose Range Status Alert Strip
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(statusColor.copy(alpha = 0.14f))
+                        .border(1.dp, statusColor.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                        .testTag("${testTag}_status"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = statusIcon,
+                        contentDescription = statusHeading,
+                        tint = statusColor,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = statusHeading,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = statusColor
+                        )
+                        Text(
+                            text = validation.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
             }
         }
     }

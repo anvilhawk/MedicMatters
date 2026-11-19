@@ -57,8 +57,28 @@ enum class DoseRateUnit(
     MCG_MIN("mcg/min", MedicationUnit.MCG, false, false),
     MG_MIN("mg/min", MedicationUnit.MG, false, false),
     MG_HR("mg/hr", MedicationUnit.MG, false, true),
+    UNITS_MIN("units/min", MedicationUnit.UNITS, false, false),
     UNITS_HR("units/hr", MedicationUnit.UNITS, false, true)
 }
+
+enum class DoseRangeStatus {
+    WITHIN_RANGE,
+    BELOW_MIN,
+    ABOVE_MAX,
+    MAX_SINGLE_EXCEEDED,
+    INFO_ONLY
+}
+
+data class ProtocolDoseValidation(
+    val medName: String,
+    val pcgSection: String,
+    val standardMix: String,
+    val averageDoseSummary: String,
+    val normalRangeSummary: String,
+    val notes: String? = null,
+    val status: DoseRangeStatus,
+    val message: String
+)
 
 data class DripResult(
     val gttPerMinute: Double,
@@ -81,7 +101,19 @@ data class DripPreset(
     val bagVolumeMl: String = "",
     val timeValue: String = "",
     val timeUnit: TimeUnit = TimeUnit.MINUTES,
-    val dropFactor: Int = 60
+    val dropFactor: Int = 60,
+    val pcgSection: String = "",
+    val averageDoseSummary: String = "",
+    val normalRangeSummary: String = "",
+    val minRatePrimary: Double? = null,
+    val maxRatePrimary: Double? = null,
+    val primaryRateUnit: DoseRateUnit? = null,
+    val altMinRate: Double? = null,
+    val altMaxRate: Double? = null,
+    val altRateUnit: DoseRateUnit? = null,
+    val protocolNotes: String? = null,
+    val id: Long = 0L,
+    val sortOrder: Int = 0
 )
 
 enum class OxygenCylinder(
@@ -132,7 +164,21 @@ data class SyringePreset(
     val desiredUnit: MedicationUnit,
     val drugOnHand: String,
     val onHandUnit: MedicationUnit,
-    val volumeOnHandMl: String
+    val volumeOnHandMl: String,
+    val pcgSection: String = "",
+    val averageDoseSummary: String = "",
+    val normalRangeSummary: String = "",
+    val fixedMin: Double? = null,
+    val fixedMax: Double? = null,
+    val fixedUnit: MedicationUnit? = null,
+    val weightMin: Double? = null,
+    val weightMax: Double? = null,
+    val weightUnit: MedicationUnit? = null,
+    val maxSingleDose: Double? = null,
+    val maxSingleUnit: MedicationUnit? = null,
+    val protocolNotes: String? = null,
+    val id: Long = 0L,
+    val sortOrder: Int = 0
 )
 
 enum class PatientSex(val label: String, val devineBaseKg: Double) {

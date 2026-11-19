@@ -1,6 +1,8 @@
 package com.example
 
 import com.example.domain.DoseRateUnit
+import com.example.domain.DoseRangeStatus
+import com.example.domain.DripMode
 import com.example.domain.GcsEye
 import com.example.domain.GcsMotor
 import com.example.domain.GcsSeverity
@@ -225,5 +227,159 @@ class MedicMathTest {
             motor = GcsMotor.OBEYS_COMMANDS
         )
         assertNull(incomplete)
+    }
+
+    @Test
+    fun `air methods pcg drip protocol validation flags underdose and overdose`() {
+        val dopamine = MedicMath.findDripPreset("Dopamine")!!
+        val within = MedicMath.validateDripDose(
+            preset = dopamine,
+            desiredDose = 5.0,
+            doseRateUnit = DoseRateUnit.MCG_KG_MIN,
+            mode = DripMode.MED_INFUSION,
+            bagVolumeMl = 250.0,
+            timeValue = null,
+            timeUnit = TimeUnit.MINUTES
+        )
+        assertEquals(DoseRangeStatus.WITHIN_RANGE, within.status)
+
+        val tooLow = MedicMath.validateDripDose(
+            preset = dopamine,
+            desiredDose = 1.0,
+            doseRateUnit = DoseRateUnit.MCG_KG_MIN,
+            mode = DripMode.MED_INFUSION,
+            bagVolumeMl = 250.0,
+            timeValue = null,
+            timeUnit = TimeUnit.MINUTES
+        )
+        assertEquals(DoseRangeStatus.BELOW_MIN, tooLow.status)
+
+        val tooHigh = MedicMath.validateDripDose(
+            preset = dopamine,
+            desiredDose = 25.0,
+            doseRateUnit = DoseRateUnit.MCG_KG_MIN,
+            mode = DripMode.MED_INFUSION,
+            bagVolumeMl = 250.0,
+            timeValue = null,
+            timeUnit = TimeUnit.MINUTES
+        )
+        assertEquals(DoseRangeStatus.ABOVE_MAX, tooHigh.status)
+
+        // Norepinephrine supports both mcg/min (2-30) and mcg/kg/min (0.05-2)
+        val norepi = MedicMath.findDripPreset("Norepi")!!
+        assertEquals("8", norepi.drugAmount)
+        val norepiKg = MedicMath.validateDripDose(
+            preset = norepi,
+            desiredDose = 0.5,
+            doseRateUnit = DoseRateUnit.MCG_KG_MIN,
+            mode = DripMode.MED_INFUSION,
+            bagVolumeMl = 250.0,
+            timeValue = null,
+            timeUnit = TimeUnit.MINUTES
+        )
+        assertEquals(DoseRangeStatus.WITHIN_RANGE, norepiKg.status)
+
+        // Vasopressin shock range 0.01 - 0.04 units/min
+        val vasopressin = MedicMath.findDripPreset("Vasopressin")!!
+        val vasoOk = MedicMath.validateDripDose(
+            preset = vasopressin,
+            desiredDose = 0.03,
+            doseRateUnit = DoseRateUnit.UNITS_MIN,
+            mode = DripMode.MED_INFUSION,
+            bagVolumeMl = 100.0,
+            timeValue = null,
+            timeUnit = TimeUnit.MINUTES
+        )
+        assertEquals(DoseRangeStatus.WITHIN_RANGE, vasoOk.status)
+        val vasoHigh = MedicMath.validateDripDose(
+            preset = vasopressin,
+            desiredDose = 0.1,
+            doseRateUnit = DoseRateUnit.UNITS_MIN,
+            mode = DripMode.MED_INFUSION,
+            bagVolumeMl = 100.0,
+            timeValue = null,
+            timeUnit = TimeUnit.MINUTES
+        )
+        assertEquals(DoseRangeStatus.ABOVE_MAX, vasoHigh.status)
+    }
+
+    @Test
+    fun `air methods pcg syringe protocol validation checks range and max single dose`() {
+        val fentanyl = MedicMath.findSyringePreset("Fentanyl")!!
+        // 1 mcg/kg at 80 kg = 80 mcg <= 100 mcg max single dose
+        val fentanylOk = MedicMath.validateSyringeDose(
+            preset = fentanyl,
+            desiredDose = 1.0,
+            desiredUnit = MedicationUnit.MCG,
+            isWeightBased = true,
+            weight = 80.0,
+            weightUnit = WeightUnit.KG
+        )
+        assertEquals(DoseRangeStatus.WITHIN_RANGE, fentanylOk.status)
+
+        // 1 mcg/kg at 120 kg = 120 mcg > 100 mcg max single dose
+        val fentanylMaxExceeded = MedicMath.validateSyringeDose(
+            preset = fentanyl,
+            desiredDose = 1.0,
+            desiredUnit = MedicationUnit.MCG,
+            isWeightBased = true,
+            weight = 120.0,
+            weightUnit = WeightUnit.KG
+        )
+        assertEquals(DoseRangeStatus.MAX_SINGLE_EXCEEDED, fentanylMaxExceeded.status)
+
+        // 0.2 mcg/kg below 0.5 min
+        val fentanylLow = MedicMath.validateSyringeDose(
+            preset = fentanyl,
+            desiredDose = 0.2,
+            desiredUnit = MedicationUnit.MCG,
+            isWeightBased = true,
+            weight = 70.0,
+            weightUnit = WeightUnit.KG
+        )
+        assertEquals(DoseRangeStatus.BELOW_MIN, fentanylLow.status)
+
+        // Ondansetron fixed 4 mg adult & 0.1 mg/kg peds
+        val ondansetron = MedicMath.findSyringePreset("Ondansetron")!!
+        assertEquals(
+            DoseRangeStatus.WITHIN_RANGE,
+            MedicMath.validateSyringeDose(ondansetron, 4.0, MedicationUnit.MG, false, null, WeightUnit.KG).status
+        )
+        assertEquals(
+            DoseRangeStatus.ABOVE_MAX,
+            MedicMath.validateSyringeDose(ondansetron, 8.0, MedicationUnit.MG, false, null, WeightUnit.KG).status
+        )
+        assertEquals(
+            DoseRangeStatus.WITHIN_RANGE,
+            MedicMath.validateSyringeDose(ondansetron, 0.1, MedicationUnit.MG, true, 20.0, WeightUnit.KG).status
+        )
+    }
+
+    @Test
+    fun `generic drug is first preset in drip and syringe lists with custom info status`() {
+        val firstDrip = MedicMath.DRIP_PRESETS.first()
+        assertEquals("Generic", firstDrip.name)
+        val dripValidation = MedicMath.validateDripDose(
+            preset = firstDrip,
+            desiredDose = 12.0,
+            doseRateUnit = DoseRateUnit.MCG_KG_MIN,
+            mode = DripMode.MED_INFUSION,
+            bagVolumeMl = 250.0,
+            timeValue = null,
+            timeUnit = TimeUnit.MINUTES
+        )
+        assertEquals(DoseRangeStatus.INFO_ONLY, dripValidation.status)
+
+        val firstSyringe = MedicMath.SYRINGE_PRESETS.first()
+        assertEquals("Generic", firstSyringe.name)
+        val syringeValidation = MedicMath.validateSyringeDose(
+            preset = firstSyringe,
+            desiredDose = 75.0,
+            desiredUnit = MedicationUnit.MCG,
+            isWeightBased = false,
+            weight = null,
+            weightUnit = WeightUnit.KG
+        )
+        assertEquals(DoseRangeStatus.INFO_ONLY, syringeValidation.status)
     }
 }

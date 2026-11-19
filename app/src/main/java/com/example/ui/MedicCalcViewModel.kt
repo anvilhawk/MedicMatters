@@ -1,6 +1,10 @@
 package com.example.ui
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.data.ProtocolDatabase
+import com.example.data.ProtocolRepository
 import com.example.domain.DoseRateUnit
 import com.example.domain.DripMode
 import com.example.domain.DripPreset
@@ -17,28 +21,47 @@ import com.example.domain.MedicationUnit
 import com.example.domain.OxygenCylinder
 import com.example.domain.OxygenResult
 import com.example.domain.PatientSex
+import com.example.domain.ProtocolDoseValidation
 import com.example.domain.SyringePreset
 import com.example.domain.SyringeResult
 import com.example.domain.TimeUnit
 import com.example.domain.WeightUnit
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+private val DEFAULT_DRIP_PRESETS: List<DripPreset> =
+    MedicMath.DRIP_PRESETS.mapIndexed { index, preset ->
+        preset.copy(id = index + 1L, sortOrder = index)
+    }
+
+private val DEFAULT_SYRINGE_PRESETS: List<SyringePreset> =
+    MedicMath.SYRINGE_PRESETS.mapIndexed { index, preset ->
+        preset.copy(id = index + 1L, sortOrder = index)
+    }
 
 data class DripUiState(
-    val mode: DripMode = DripMode.VOLUME_TIME,
+    val presets: List<DripPreset> = DEFAULT_DRIP_PRESETS,
+    val selectedPresetId: Long? = null,
+    val selectedPresetName: String? = "Generic",
+    val mode: DripMode = DripMode.MED_INFUSION,
     val volumeMl: String = "500",
     val timeValue: String = "4",
     val timeUnit: TimeUnit = TimeUnit.HOURS,
-    val dropFactor: Int = 15,
+    val dropFactor: Int = 60,
     val customDropFactor: String = "",
     val isCustomDropFactor: Boolean = false,
     val weight: String = "80",
     val weightUnit: WeightUnit = WeightUnit.KG,
     val desiredDose: String = "5",
     val doseRateUnit: DoseRateUnit = DoseRateUnit.MCG_KG_MIN,
-    val drugAmount: String = "400",
+    val isConcentrationMode: Boolean = true,
+    val concentrationPerMl: String = "1",
+    val concentrationUnit: MedicationUnit = MedicationUnit.MG,
+    val drugAmount: String = "250",
     val drugUnit: MedicationUnit = MedicationUnit.MG,
     val bagVolumeMl: String = "250",
     val metronomeEnabled: Boolean = false,
@@ -67,6 +90,23 @@ data class DripUiState(
                 dropFactorGttPerMl = effectiveDropFactor
             )
         }
+
+    val selectedPreset: DripPreset?
+        get() = presets.firstOrNull { selectedPresetId != null && it.id == selectedPresetId }
+            ?: presets.firstOrNull { selectedPresetName != null && it.name == selectedPresetName }
+
+    val protocolValidation: ProtocolDoseValidation?
+        get() = selectedPreset?.let { preset ->
+            MedicMath.validateDripDose(
+                preset = preset,
+                desiredDose = desiredDose.toDoubleOrNull(),
+                doseRateUnit = doseRateUnit,
+                mode = mode,
+                bagVolumeMl = bagVolumeMl.toDoubleOrNull(),
+                timeValue = timeValue.toDoubleOrNull(),
+                timeUnit = timeUnit
+            )
+        }
 }
 
 data class OxygenUiState(
@@ -85,11 +125,17 @@ data class OxygenUiState(
 }
 
 data class SyringeUiState(
+    val presets: List<SyringePreset> = DEFAULT_SYRINGE_PRESETS,
+    val selectedPresetId: Long? = null,
+    val selectedPresetName: String? = "Generic",
     val isWeightBased: Boolean = false,
     val weight: String = "80",
     val weightUnit: WeightUnit = WeightUnit.KG,
     val desiredDose: String = "75",
     val desiredUnit: MedicationUnit = MedicationUnit.MCG,
+    val isConcentrationMode: Boolean = true,
+    val concentrationPerMl: String = "50",
+    val concentrationUnit: MedicationUnit = MedicationUnit.MCG,
     val drugOnHand: String = "100",
     val onHandUnit: MedicationUnit = MedicationUnit.MCG,
     val volumeOnHandMl: String = "2"
@@ -105,6 +151,22 @@ data class SyringeUiState(
             onHandUnit = onHandUnit,
             volumeOnHandMl = volumeOnHandMl.toDoubleOrNull()
         )
+
+    val selectedPreset: SyringePreset?
+        get() = presets.firstOrNull { selectedPresetId != null && it.id == selectedPresetId }
+            ?: presets.firstOrNull { selectedPresetName != null && it.name == selectedPresetName }
+
+    val protocolValidation: ProtocolDoseValidation?
+        get() = selectedPreset?.let { preset ->
+            MedicMath.validateSyringeDose(
+                preset = preset,
+                desiredDose = desiredDose.toDoubleOrNull(),
+                desiredUnit = desiredUnit,
+                isWeightBased = isWeightBased,
+                weight = weight.toDoubleOrNull(),
+                weightUnit = weightUnit
+            )
+        }
 }
 
 data class IbwUiState(
@@ -137,6 +199,7 @@ data class MedicCalcUiState(
     val activeTab: MedicTab = MedicTab.DRIP,
     val isNightMode: Boolean = true,
     val showFormulaDialog: Boolean = false,
+    val showSettings: Boolean = false,
     val drip: DripUiState = DripUiState(),
     val oxygen: OxygenUiState = OxygenUiState(),
     val syringe: SyringeUiState = SyringeUiState(),
@@ -144,10 +207,55 @@ data class MedicCalcUiState(
     val gcs: GcsUiState = GcsUiState()
 )
 
-class MedicCalcViewModel : ViewModel() {
+class MedicCalcViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val repository = ProtocolRepository(
+        context = application,
+        dao = ProtocolDatabase.getInstance(application).protocolDao()
+    )
 
     private val _uiState = MutableStateFlow(MedicCalcUiState())
     val uiState: StateFlow<MedicCalcUiState> = _uiState.asStateFlow()
+
+    init {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.ensureSeeded()
+        }
+        viewModelScope.launch {
+            repository.dripProtocols.collect { list ->
+                _uiState.update { state ->
+                    val currentId = state.drip.selectedPresetId
+                    val currentName = state.drip.selectedPresetName
+                    val matched = list.firstOrNull { currentId != null && it.id == currentId }
+                        ?: list.firstOrNull { currentName != null && it.name == currentName }
+                    state.copy(
+                        drip = state.drip.copy(
+                            presets = list,
+                            selectedPresetId = matched?.id,
+                            selectedPresetName = matched?.name
+                        )
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            repository.syringeProtocols.collect { list ->
+                _uiState.update { state ->
+                    val currentId = state.syringe.selectedPresetId
+                    val currentName = state.syringe.selectedPresetName
+                    val matched = list.firstOrNull { currentId != null && it.id == currentId }
+                        ?: list.firstOrNull { currentName != null && it.name == currentName }
+                    state.copy(
+                        syringe = state.syringe.copy(
+                            presets = list,
+                            selectedPresetId = matched?.id,
+                            selectedPresetName = matched?.name
+                        )
+                    )
+                }
+            }
+        }
+    }
 
     fun selectTab(tab: MedicTab) {
         _uiState.update { it.copy(activeTab = tab) }
@@ -159,6 +267,67 @@ class MedicCalcViewModel : ViewModel() {
 
     fun setShowFormulaDialog(show: Boolean) {
         _uiState.update { it.copy(showFormulaDialog = show) }
+    }
+
+    fun setShowSettings(show: Boolean) {
+        _uiState.update { it.copy(showSettings = show) }
+    }
+
+    // --- Protocol Settings CRUD ---
+    fun saveDripProtocol(preset: DripPreset) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.saveDripProtocol(preset)
+        }
+    }
+
+    fun deleteDripProtocol(id: Long) {
+        _uiState.update { state ->
+            if (state.drip.selectedPresetId == id) {
+                state.copy(
+                    drip = state.drip.copy(
+                        selectedPresetId = null,
+                        selectedPresetName = null
+                    )
+                )
+            } else state
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteDripProtocol(id)
+        }
+    }
+
+    fun saveSyringeProtocol(preset: SyringePreset) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.saveSyringeProtocol(preset)
+        }
+    }
+
+    fun deleteSyringeProtocol(id: Long) {
+        _uiState.update { state ->
+            if (state.syringe.selectedPresetId == id) {
+                state.copy(
+                    syringe = state.syringe.copy(
+                        selectedPresetId = null,
+                        selectedPresetName = null
+                    )
+                )
+            } else state
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.deleteSyringeProtocol(id)
+        }
+    }
+
+    fun resetProtocolsToDefaults() {
+        _uiState.update { state ->
+            state.copy(
+                drip = state.drip.copy(selectedPresetId = null, selectedPresetName = "Generic"),
+                syringe = state.syringe.copy(selectedPresetId = null, selectedPresetName = "Generic")
+            )
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.resetToDefaults()
+        }
     }
 
     // --- Drip Actions ---
@@ -217,18 +386,112 @@ class MedicCalcViewModel : ViewModel() {
         _uiState.update { it.copy(drip = it.drip.copy(doseRateUnit = unit)) }
     }
 
+    fun setDripConcentrationMode(enabled: Boolean) {
+        _uiState.update { state ->
+            val current = state.drip
+            if (current.isConcentrationMode == enabled) return@update state
+            if (enabled) {
+                val computedConc = computeConcentrationString(current.drugAmount, current.bagVolumeMl)
+                state.copy(
+                    drip = current.copy(
+                        isConcentrationMode = true,
+                        concentrationPerMl = computedConc.ifEmpty { current.concentrationPerMl },
+                        concentrationUnit = current.drugUnit
+                    )
+                )
+            } else {
+                state.copy(drip = current.copy(isConcentrationMode = false))
+            }
+        }
+    }
+
+    fun setDripConcentrationPerMl(valStr: String) {
+        val clean = sanitizeDecimal(valStr)
+        _uiState.update { state ->
+            val current = state.drip
+            val updatedTotal = computeTotalDrugString(clean, current.bagVolumeMl)
+            state.copy(
+                drip = current.copy(
+                    concentrationPerMl = clean,
+                    drugAmount = updatedTotal,
+                    drugUnit = current.concentrationUnit
+                )
+            )
+        }
+    }
+
+    fun setDripConcentrationUnit(unit: MedicationUnit) {
+        _uiState.update { state ->
+            val current = state.drip
+            val updatedTotal = computeTotalDrugString(current.concentrationPerMl, current.bagVolumeMl)
+            state.copy(
+                drip = current.copy(
+                    concentrationUnit = unit,
+                    drugUnit = unit,
+                    drugAmount = updatedTotal
+                )
+            )
+        }
+    }
+
+    fun selectDripQuickConcentration(amountPerMl: String, unit: MedicationUnit) {
+        _uiState.update { state ->
+            val current = state.drip
+            val updatedTotal = computeTotalDrugString(amountPerMl, current.bagVolumeMl)
+            state.copy(
+                drip = current.copy(
+                    isConcentrationMode = true,
+                    concentrationPerMl = amountPerMl,
+                    concentrationUnit = unit,
+                    drugUnit = unit,
+                    drugAmount = updatedTotal
+                )
+            )
+        }
+    }
+
     fun setDripDrugAmount(valStr: String) {
         val clean = sanitizeDecimal(valStr)
-        _uiState.update { it.copy(drip = it.drip.copy(drugAmount = clean)) }
+        _uiState.update { state ->
+            val current = state.drip
+            val conc = computeConcentrationString(clean, current.bagVolumeMl)
+            state.copy(
+                drip = current.copy(
+                    drugAmount = clean,
+                    concentrationPerMl = if (conc.isNotEmpty()) conc else current.concentrationPerMl
+                )
+            )
+        }
     }
 
     fun setDripDrugUnit(unit: MedicationUnit) {
-        _uiState.update { it.copy(drip = it.drip.copy(drugUnit = unit)) }
+        _uiState.update {
+            it.copy(drip = it.drip.copy(drugUnit = unit, concentrationUnit = unit))
+        }
     }
 
     fun setDripBagVolume(valStr: String) {
         val clean = sanitizeDecimal(valStr)
-        _uiState.update { it.copy(drip = it.drip.copy(bagVolumeMl = clean)) }
+        _uiState.update { state ->
+            val current = state.drip
+            val updatedDrugAmount = if (current.isConcentrationMode) {
+                computeTotalDrugString(current.concentrationPerMl, clean)
+            } else {
+                current.drugAmount
+            }
+            val updatedConc = if (!current.isConcentrationMode) {
+                computeConcentrationString(current.drugAmount, clean).ifEmpty { current.concentrationPerMl }
+            } else {
+                current.concentrationPerMl
+            }
+            state.copy(
+                drip = current.copy(
+                    bagVolumeMl = clean,
+                    drugAmount = updatedDrugAmount,
+                    concentrationPerMl = updatedConc
+                )
+            )
+        }
     }
 
     fun toggleDripMetronome() {
@@ -270,23 +533,36 @@ class MedicCalcViewModel : ViewModel() {
 
     fun applyDripPreset(preset: DripPreset) {
         _uiState.update { state ->
+            val resolvedId = preset.id.takeIf { it > 0L }
+            val isGeneric = preset.name.equals("Generic", ignoreCase = true)
+            val computedConc = computeConcentrationString(preset.drugAmount, preset.bagVolumeMl)
             if (preset.mode == DripMode.VOLUME_TIME) {
                 state.copy(
                     drip = state.drip.copy(
+                        selectedPresetId = resolvedId,
+                        selectedPresetName = preset.name,
                         mode = DripMode.VOLUME_TIME,
                         volumeMl = preset.bagVolumeMl,
                         timeValue = preset.timeValue,
                         timeUnit = preset.timeUnit,
                         dropFactor = preset.dropFactor,
-                        isCustomDropFactor = false
+                        isCustomDropFactor = false,
+                        isConcentrationMode = isGeneric,
+                        concentrationPerMl = computedConc.ifEmpty { state.drip.concentrationPerMl },
+                        concentrationUnit = preset.drugUnit
                     )
                 )
             } else {
                 state.copy(
                     drip = state.drip.copy(
+                        selectedPresetId = resolvedId,
+                        selectedPresetName = preset.name,
                         mode = DripMode.MED_INFUSION,
                         desiredDose = preset.doseValue,
                         doseRateUnit = preset.doseRateUnit,
+                        isConcentrationMode = isGeneric,
+                        concentrationPerMl = computedConc.ifEmpty { "1" },
+                        concentrationUnit = preset.drugUnit,
                         drugAmount = preset.drugAmount,
                         drugUnit = preset.drugUnit,
                         bagVolumeMl = preset.bagVolumeMl,
@@ -295,6 +571,12 @@ class MedicCalcViewModel : ViewModel() {
                     )
                 )
             }
+        }
+    }
+
+    fun clearDripPresetSelection() {
+        _uiState.update {
+            it.copy(drip = it.drip.copy(selectedPresetId = null, selectedPresetName = null))
         }
     }
 
@@ -347,32 +629,139 @@ class MedicCalcViewModel : ViewModel() {
         _uiState.update { it.copy(syringe = it.syringe.copy(desiredUnit = unit)) }
     }
 
+    fun setSyringeConcentrationMode(enabled: Boolean) {
+        _uiState.update { state ->
+            val current = state.syringe
+            if (current.isConcentrationMode == enabled) return@update state
+            if (enabled) {
+                val computedConc = computeConcentrationString(current.drugOnHand, current.volumeOnHandMl)
+                state.copy(
+                    syringe = current.copy(
+                        isConcentrationMode = true,
+                        concentrationPerMl = computedConc.ifEmpty { current.concentrationPerMl },
+                        concentrationUnit = current.onHandUnit
+                    )
+                )
+            } else {
+                state.copy(syringe = current.copy(isConcentrationMode = false))
+            }
+        }
+    }
+
+    fun setSyringeConcentrationPerMl(valStr: String) {
+        val clean = sanitizeDecimal(valStr)
+        _uiState.update { state ->
+            val current = state.syringe
+            val updatedTotal = computeTotalDrugString(clean, current.volumeOnHandMl)
+            state.copy(
+                syringe = current.copy(
+                    concentrationPerMl = clean,
+                    drugOnHand = updatedTotal,
+                    onHandUnit = current.concentrationUnit
+                )
+            )
+        }
+    }
+
+    fun setSyringeConcentrationUnit(unit: MedicationUnit) {
+        _uiState.update { state ->
+            val current = state.syringe
+            val updatedTotal = computeTotalDrugString(current.concentrationPerMl, current.volumeOnHandMl)
+            state.copy(
+                syringe = current.copy(
+                    concentrationUnit = unit,
+                    onHandUnit = unit,
+                    drugOnHand = updatedTotal
+                )
+            )
+        }
+    }
+
+    fun selectSyringeQuickConcentration(amountPerMl: String, unit: MedicationUnit) {
+        _uiState.update { state ->
+            val current = state.syringe
+            val updatedTotal = computeTotalDrugString(amountPerMl, current.volumeOnHandMl)
+            state.copy(
+                syringe = current.copy(
+                    isConcentrationMode = true,
+                    concentrationPerMl = amountPerMl,
+                    concentrationUnit = unit,
+                    onHandUnit = unit,
+                    drugOnHand = updatedTotal
+                )
+            )
+        }
+    }
+
     fun setSyringeDrugOnHand(valStr: String) {
         val clean = sanitizeDecimal(valStr)
-        _uiState.update { it.copy(syringe = it.syringe.copy(drugOnHand = clean)) }
+        _uiState.update { state ->
+            val current = state.syringe
+            val conc = computeConcentrationString(clean, current.volumeOnHandMl)
+            state.copy(
+                syringe = current.copy(
+                    drugOnHand = clean,
+                    concentrationPerMl = if (conc.isNotEmpty()) conc else current.concentrationPerMl
+                )
+            )
+        }
     }
 
     fun setSyringeOnHandUnit(unit: MedicationUnit) {
-        _uiState.update { it.copy(syringe = it.syringe.copy(onHandUnit = unit)) }
+        _uiState.update {
+            it.copy(syringe = it.syringe.copy(onHandUnit = unit, concentrationUnit = unit))
+        }
     }
 
     fun setSyringeVolumeOnHand(valStr: String) {
         val clean = sanitizeDecimal(valStr)
-        _uiState.update { it.copy(syringe = it.syringe.copy(volumeOnHandMl = clean)) }
+        _uiState.update { state ->
+            val current = state.syringe
+            val updatedDrugOnHand = if (current.isConcentrationMode) {
+                computeTotalDrugString(current.concentrationPerMl, clean)
+            } else {
+                current.drugOnHand
+            }
+            val updatedConc = if (!current.isConcentrationMode) {
+                computeConcentrationString(current.drugOnHand, clean).ifEmpty { current.concentrationPerMl }
+            } else {
+                current.concentrationPerMl
+            }
+            state.copy(
+                syringe = current.copy(
+                    volumeOnHandMl = clean,
+                    drugOnHand = updatedDrugOnHand,
+                    concentrationPerMl = updatedConc
+                )
+            )
+        }
     }
 
     fun applySyringePreset(preset: SyringePreset) {
         _uiState.update { state ->
+            val isGeneric = preset.name.equals("Generic", ignoreCase = true)
+            val computedConc = computeConcentrationString(preset.drugOnHand, preset.volumeOnHandMl)
             state.copy(
                 syringe = state.syringe.copy(
+                    selectedPresetId = preset.id.takeIf { it > 0L },
+                    selectedPresetName = preset.name,
                     isWeightBased = preset.isWeightBased,
                     desiredDose = preset.desiredDose,
                     desiredUnit = preset.desiredUnit,
+                    isConcentrationMode = isGeneric,
+                    concentrationPerMl = computedConc.ifEmpty { "50" },
+                    concentrationUnit = preset.onHandUnit,
                     drugOnHand = preset.drugOnHand,
                     onHandUnit = preset.onHandUnit,
                     volumeOnHandMl = preset.volumeOnHandMl
                 )
             )
+        }
+    }
+
+    fun clearSyringePresetSelection() {
+        _uiState.update {
+            it.copy(syringe = it.syringe.copy(selectedPresetId = null, selectedPresetName = null))
         }
     }
 
@@ -487,9 +876,12 @@ class MedicCalcViewModel : ViewModel() {
             when (state.activeTab) {
                 MedicTab.DRIP -> state.copy(
                     drip = state.drip.copy(
+                        selectedPresetId = null,
+                        selectedPresetName = null,
                         volumeMl = "",
                         timeValue = "",
                         desiredDose = "",
+                        concentrationPerMl = "",
                         drugAmount = "",
                         bagVolumeMl = "",
                         metronomeEnabled = false,
@@ -502,7 +894,10 @@ class MedicCalcViewModel : ViewModel() {
                 )
                 MedicTab.SYRINGE -> state.copy(
                     syringe = state.syringe.copy(
+                        selectedPresetId = null,
+                        selectedPresetName = null,
                         desiredDose = "",
+                        concentrationPerMl = "",
                         drugOnHand = "",
                         volumeOnHandMl = ""
                     )
@@ -515,6 +910,20 @@ class MedicCalcViewModel : ViewModel() {
                 )
             }
         }
+    }
+
+    private fun computeTotalDrugString(concPerMlStr: String, volumeMlStr: String): String {
+        val conc = concPerMlStr.toDoubleOrNull()
+        val vol = volumeMlStr.toDoubleOrNull()
+        if (conc == null || vol == null || conc <= 0.0 || vol <= 0.0) return ""
+        return MedicMath.formatNumber(conc * vol, 4)
+    }
+
+    private fun computeConcentrationString(totalDrugStr: String, volumeMlStr: String): String {
+        val drug = totalDrugStr.toDoubleOrNull()
+        val vol = volumeMlStr.toDoubleOrNull()
+        if (drug == null || vol == null || drug <= 0.0 || vol <= 0.0) return ""
+        return MedicMath.formatNumber(drug / vol, 4)
     }
 
     private fun sanitizeDecimal(input: String): String {
