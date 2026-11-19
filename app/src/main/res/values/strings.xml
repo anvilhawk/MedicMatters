@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">MedicCalc</string>
+    <string name="tab_drip">Drip</string>
+    <string name="tab_oxygen">O2 Tank</string>
+    <string name="tab_syringe">Syringe</string>
+    <string name="tab_ibw">IBW</string>
+    <string name="tab_gcs">GCS</string>
+    <string name="disclaimer_title">Clinical Reference Notice</string>
+    <string name="disclaimer_body">MedicCalc is a clinical reference and educational calculation aid for EMS professionals. Always verify all medication concentrations, drop factors, cylinder pressures, and patient dosing against your local medical direction protocols and original vial labels prior to administration.</string>
+    <string name="action_got_it">Understood</string>
+    <string name="action_clear">Clear</string>
+    <string name="action_use_ibw">Use IBW</string>
+    <string name="toggle_night_mode">Toggle Night Shift Mode</string>
+    <string name="open_clinical_info">Clinical Formula Reference</string>
+</resources>

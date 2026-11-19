@@ -1,0 +1,6 @@
+{
+  "name": "MedicCalc",
+  "description": "Paramedic field calculator for IV drip rates, EMS oxygen tank duration, vial syringe dosing, and ideal body weight.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
