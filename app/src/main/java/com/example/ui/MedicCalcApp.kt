@@ -1,5 +1,7 @@
 package com.example.ui
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -10,29 +12,36 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Backspace
 import androidx.compose.material.icons.outlined.Air
-import androidx.compose.material.icons.outlined.Backspace
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.LightMode
+import androidx.compose.material.icons.outlined.MonitorHeart
 import androidx.compose.material.icons.outlined.MonitorWeight
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.Science
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Vaccines
 import androidx.compose.material.icons.outlined.WaterDrop
 import androidx.compose.material.icons.rounded.Air
 import androidx.compose.material.icons.rounded.LocalHospital
+import androidx.compose.material.icons.rounded.MonitorHeart
 import androidx.compose.material.icons.rounded.MonitorWeight
 import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material.icons.rounded.Science
 import androidx.compose.material.icons.rounded.Vaccines
 import androidx.compose.material.icons.rounded.WaterDrop
 import androidx.compose.material3.AlertDialog
@@ -40,8 +49,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
@@ -52,6 +59,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -59,6 +67,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -69,6 +79,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.R
 import com.example.domain.MedicMath
 import com.example.domain.MedicTab
+import com.example.domain.VentSubMode
+import com.example.ui.screens.AbgScreen
 import com.example.ui.screens.DripScreen
 import com.example.ui.screens.GcsScreen
 import com.example.ui.screens.IbwScreen
@@ -76,6 +88,7 @@ import com.example.ui.screens.OxygenScreen
 import com.example.ui.screens.SettingsProtocolCategory
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.SyringeScreen
+import com.example.ui.screens.VentScreen
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.MedicCalcTheme
 import kotlinx.coroutines.launch
@@ -161,7 +174,7 @@ fun MedicCalcApp(
                                 modifier = Modifier.testTag("action_clear_tab")
                             ) {
                                 Icon(
-                                    imageVector = Icons.Outlined.Backspace,
+                                    imageVector = Icons.AutoMirrored.Outlined.Backspace,
                                     contentDescription = stringResource(R.string.action_clear)
                                 )
                             }
@@ -205,33 +218,10 @@ fun MedicCalcApp(
                 },
                 bottomBar = {
                     if (!useNavigationRail) {
-                        NavigationBar(
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            tonalElevation = 4.dp
-                        ) {
-                            MedicTab.entries.forEach { tab ->
-                                val selected = uiState.activeTab == tab
-                                NavigationBarItem(
-                                    selected = selected,
-                                    onClick = { viewModel.selectTab(tab) },
-                                    icon = {
-                                        Icon(
-                                            imageVector = tabIcon(tab, selected),
-                                            contentDescription = tab.label
-                                        )
-                                    },
-                                    label = {
-                                        Text(
-                                            text = tab.label,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                            maxLines = 1
-                                        )
-                                    },
-                                    modifier = Modifier.testTag("nav_tab_${tab.name.lowercase()}")
-                                )
-                            }
-                        }
+                        ScrollableMedicBottomBar(
+                            activeTab = uiState.activeTab,
+                            onSelectTab = viewModel::selectTab
+                        )
                     }
                 }
             ) { innerPadding ->
@@ -243,7 +233,9 @@ fun MedicCalcApp(
                     if (useNavigationRail) {
                         NavigationRail(
                             containerColor = MaterialTheme.colorScheme.surface,
-                            modifier = Modifier.fillMaxHeight()
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState())
                         ) {
                             Spacer(modifier = Modifier.size(12.dp))
                             MedicTab.entries.forEach { tab ->
@@ -365,6 +357,57 @@ fun MedicCalcApp(
                                     onMotorSelect = viewModel::setGcsMotor,
                                     onResetNormal = viewModel::resetGcsNormal
                                 )
+
+                                MedicTab.ABG -> AbgScreen(
+                                    state = uiState.abg,
+                                    onSampleTypeChange = viewModel::setAbgSampleType,
+                                    onApplyPreset = viewModel::applyAbgPreset,
+                                    onPhChange = viewModel::setAbgPh,
+                                    onPaco2Change = viewModel::setAbgPaco2,
+                                    onHco3Change = viewModel::setAbgHco3,
+                                    onPao2Change = viewModel::setAbgPao2,
+                                    onFio2Change = viewModel::setAbgFio2,
+                                    onNaChange = viewModel::setAbgNa,
+                                    onClChange = viewModel::setAbgCl,
+                                    onOpenVentStrategy = { strategy ->
+                                        viewModel.setVentSubMode(VentSubMode.SETUP)
+                                        viewModel.setVentStrategy(strategy)
+                                        viewModel.selectTab(MedicTab.VENT)
+                                    }
+                                )
+
+                                MedicTab.VENT -> VentScreen(
+                                    state = uiState.vent,
+                                    onSubModeChange = viewModel::setVentSubMode,
+                                    onStrategyChange = viewModel::setVentStrategy,
+                                    onUseDirectWeightChange = viewModel::setVentUseDirectWeight,
+                                    onSexChange = viewModel::setVentSex,
+                                    onHeightUnitChange = viewModel::setVentHeightUnit,
+                                    onFeetChange = viewModel::setVentFeet,
+                                    onInchesChange = viewModel::setVentInches,
+                                    onCmChange = viewModel::setVentCm,
+                                    onDirectWeightChange = viewModel::setVentDirectWeightKg,
+                                    onTargetVtMlPerKgChange = viewModel::setVentTargetVtMlPerKg,
+                                    onSyncFromIbw = {
+                                        viewModel.syncVentFromIbwTab()
+                                        coroutineScope.launch {
+                                            snackbarHostState.showSnackbar("Synced height & sex from IBW tab")
+                                        }
+                                    },
+                                    onApplyScenario = viewModel::applyVentMechanicsScenario,
+                                    onCstatChange = viewModel::setVentCstat,
+                                    onRinspChange = viewModel::setVentRinsp,
+                                    onRcexpChange = viewModel::setVentRcexp,
+                                    onPpeakChange = viewModel::setVentPpeak,
+                                    onPplatChange = viewModel::setVentPplat,
+                                    onPeepChange = viewModel::setVentPeep,
+                                    onVteChange = viewModel::setVentVte,
+                                    onAutoPeepChange = viewModel::setVentAutoPeep,
+                                    onVLeakChange = viewModel::setVentVLeak,
+                                    onRrChange = viewModel::setVentRr,
+                                    onTiSecChange = viewModel::setVentTiSec,
+                                    onP01Change = viewModel::setVentP01
+                                )
                             }
                         }
                     }
@@ -381,12 +424,84 @@ fun MedicCalcApp(
     }
 }
 
+@Composable
+private fun ScrollableMedicBottomBar(
+    activeTab: MedicTab,
+    onSelectTab: (MedicTab) -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 4.dp,
+        shadowElevation = 6.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            MedicTab.entries.forEach { tab ->
+                val selected = activeTab == tab
+                Surface(
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .widthIn(min = 66.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { onSelectTab(tab) }
+                        .testTag("nav_tab_${tab.name.lowercase()}"),
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (selected) {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    } else {
+                        Color.Transparent
+                    }
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = tabIcon(tab, selected),
+                            contentDescription = tab.label,
+                            tint = if (selected) {
+                                MaterialTheme.colorScheme.onSecondaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = tab.label,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.onSecondaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 private fun tabIcon(tab: MedicTab, selected: Boolean): ImageVector = when (tab) {
     MedicTab.DRIP -> if (selected) Icons.Rounded.WaterDrop else Icons.Outlined.WaterDrop
     MedicTab.OXYGEN -> if (selected) Icons.Rounded.Air else Icons.Outlined.Air
     MedicTab.SYRINGE -> if (selected) Icons.Rounded.Vaccines else Icons.Outlined.Vaccines
     MedicTab.IBW -> if (selected) Icons.Rounded.MonitorWeight else Icons.Outlined.MonitorWeight
     MedicTab.GCS -> if (selected) Icons.Rounded.Psychology else Icons.Outlined.Psychology
+    MedicTab.ABG -> if (selected) Icons.Rounded.Science else Icons.Outlined.Science
+    MedicTab.VENT -> if (selected) Icons.Rounded.MonitorHeart else Icons.Outlined.MonitorHeart
 }
 
 @Composable
@@ -400,7 +515,10 @@ private fun ClinicalFormulaDialog(onDismiss: () -> Unit) {
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Text(
                     text = stringResource(R.string.disclaimer_body),
                     style = MaterialTheme.typography.bodyMedium
@@ -410,7 +528,10 @@ private fun ClinicalFormulaDialog(onDismiss: () -> Unit) {
                 FormulaLine("Syringe", "mL = Desired Dose ÷ (Drug ÷ mL)")
                 FormulaLine("Devine IBW", "M: 50 + 2.3×(in−60) | F: 45.5 + 2.3×(in−60)")
                 FormulaLine("GCS Score", "E(1–4) + V(1–5) + M(1–6) | Mild ≥13, Mod 9–12, Sev ≤8")
-                FormulaLine("Dose Ranges", "Air Methods PCG Rev 10 (11/03/2023) Adult & Peds")
+                FormulaLine("ABG / Gap", "Winter's: PaCO2 = 1.5×HCO3 + 8 ± 2 | AG = Na − Cl − HCO3")
+                FormulaLine("Vent Setup", "RR = VE ÷ VT | VE 100 (Norm), 120 (Acid), 150/200 (Peds)")
+                FormulaLine("Vent Mechanics", "Cstat = VTE÷(Pplat−PEEP) | Min TE = 3×RCexp | PIP−Pplat > 5")
+                FormulaLine("Protocol Ref", "Air Methods PCG Rev 10 (11/03/2023) Adult & Peds")
             }
         },
         confirmButton = {

@@ -63,12 +63,12 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithText("31").performScrollTo().assertIsDisplayed()
 
         // Switch to O2 Tank tab
-        composeTestRule.onNodeWithTag("nav_tab_oxygen").performClick()
+        composeTestRule.onNodeWithTag("nav_tab_oxygen").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("oxygen_result_card").assertIsDisplayed()
 
         // Switch to Syringe tab (starts on Generic: 75 mcg from 50 mcg/mL in 2 mL = 1.5 mL)
-        composeTestRule.onNodeWithTag("nav_tab_syringe").performClick()
+        composeTestRule.onNodeWithTag("nav_tab_syringe").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("syringe_result_card").assertIsDisplayed()
         composeTestRule.onNodeWithTag("syringe_preset_generic").assertIsDisplayed()
@@ -81,7 +81,7 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithText("Vial Total: 50 mg in 10 mL").performScrollTo().assertIsDisplayed()
 
         // Switch to IBW tab and tap Female
-        composeTestRule.onNodeWithTag("nav_tab_ibw").performClick()
+        composeTestRule.onNodeWithTag("nav_tab_ibw").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("ibw_result_card").assertIsDisplayed()
         composeTestRule.onNodeWithTag("ibw_sex_female").performScrollTo().performClick()
@@ -89,7 +89,7 @@ class ExampleRobolectricTest {
         composeTestRule.onNodeWithText("68.5").performScrollTo().assertIsDisplayed()
 
         // Switch to GCS tab and score E2 V2 M4 = 8 (Severe)
-        composeTestRule.onNodeWithTag("nav_tab_gcs").performClick()
+        composeTestRule.onNodeWithTag("nav_tab_gcs").performScrollTo().performClick()
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithTag("gcs_result_card").assertIsDisplayed()
         composeTestRule.onNodeWithTag("gcs_eye_2").performScrollTo().performClick()
@@ -98,6 +98,28 @@ class ExampleRobolectricTest {
         composeTestRule.waitForIdle()
         composeTestRule.onNodeWithText("8").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithText("Severe / Coma (3–8)").performScrollTo().assertIsDisplayed()
+
+        // Switch to ABG tab, select DKA preset, and verify HAGMA diagnosis & causes
+        composeTestRule.onNodeWithTag("nav_tab_abg").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("abg_result_card").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("abg_preset_dka").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("High-AG Metabolic Acidosis").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("abg_causes_card").performScrollTo().assertIsDisplayed()
+
+        // Jump from ABG directly to Vent Strategy -> Met. Acidosis
+        composeTestRule.onNodeWithTag("abg_open_vent_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("vent_setup_result_card").performScrollTo().assertIsDisplayed()
+
+        // Switch Vent sub-mode to Troubleshoot, select High Rinsp, verify DOPES & Resistance diagnosis
+        composeTestRule.onNodeWithTag("vent_submode_Troubleshoot").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("vent_scenario_high_rinsp").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("vent_mechanics_result_card").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Airway Resistance Problem (Normal Alveolar Pplat)").performScrollTo().assertIsDisplayed()
     }
 
     @Test

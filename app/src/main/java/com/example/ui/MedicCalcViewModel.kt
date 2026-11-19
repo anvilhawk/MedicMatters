@@ -5,6 +5,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.ProtocolDatabase
 import com.example.data.ProtocolRepository
+import com.example.domain.AbgMath
+import com.example.domain.AbgPreset
+import com.example.domain.AbgResult
+import com.example.domain.AbgSampleType
 import com.example.domain.DoseRateUnit
 import com.example.domain.DripMode
 import com.example.domain.DripPreset
@@ -25,6 +29,12 @@ import com.example.domain.ProtocolDoseValidation
 import com.example.domain.SyringePreset
 import com.example.domain.SyringeResult
 import com.example.domain.TimeUnit
+import com.example.domain.VentMath
+import com.example.domain.VentMechanicsResult
+import com.example.domain.VentMechanicsScenario
+import com.example.domain.VentSetupResult
+import com.example.domain.VentStrategy
+import com.example.domain.VentSubMode
 import com.example.domain.WeightUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -195,6 +205,103 @@ data class GcsUiState(
         get() = MedicMath.calculateGcs(eye = eye, verbal = verbal, motor = motor)
 }
 
+data class AbgUiState(
+    val sampleType: AbgSampleType = AbgSampleType.ARTERIAL,
+    val selectedPresetName: String? = "Normal",
+    val ph: String = "7.40",
+    val paco2: String = "40",
+    val hco3: String = "24",
+    val pao2: String = "95",
+    val fio2Percent: String = "21",
+    val na: String = "140",
+    val cl: String = "104"
+) {
+    val result: AbgResult?
+        get() = AbgMath.analyze(
+            sampleType = sampleType,
+            ph = ph.toDoubleOrNull(),
+            paco2 = paco2.toDoubleOrNull(),
+            hco3 = hco3.toDoubleOrNull(),
+            pao2 = pao2.toDoubleOrNull(),
+            fio2Percent = fio2Percent.toDoubleOrNull(),
+            na = na.toDoubleOrNull(),
+            cl = cl.toDoubleOrNull()
+        )
+}
+
+data class VentUiState(
+    val subMode: VentSubMode = VentSubMode.SETUP,
+    val strategy: VentStrategy = VentStrategy.NORMAL,
+    val useDirectWeight: Boolean = false,
+    val sex: PatientSex = PatientSex.MALE,
+    val heightUnit: HeightUnit = HeightUnit.FT_IN,
+    val feet: String = "5",
+    val inches: String = "10",
+    val cm: String = "178",
+    val directWeightKg: String = "70",
+    val targetVtMlPerKg: String = "7",
+    val selectedScenarioName: String? = "Normal",
+    val cstat: String = "55",
+    val rinsp: String = "10",
+    val rcexp: String = "0.7",
+    val ppeak: String = "22",
+    val pplat: String = "18",
+    val peep: String = "5",
+    val vte: String = "480",
+    val autoPeep: String = "0",
+    val vLeakPercent: String = "2",
+    val rr: String = "14",
+    val tiSec: String = "1.0",
+    val p01: String = "-1.5"
+) {
+    val computedIbw: IbwResult?
+        get() = MedicMath.calculateIbw(
+            sex = sex,
+            heightUnit = heightUnit,
+            feet = feet.toDoubleOrNull(),
+            inches = inches.toDoubleOrNull(),
+            cm = cm.toDoubleOrNull()
+        )
+
+    val effectiveWeightKg: Double?
+        get() = if (useDirectWeight) {
+            directWeightKg.toDoubleOrNull()
+        } else {
+            computedIbw?.ibwKg
+        }
+
+    val weightSourceLabel: String
+        get() = if (useDirectWeight) {
+            "Direct / Actual Weight"
+        } else {
+            "Devine IBW (${sex.label})"
+        }
+
+    val setupResult: VentSetupResult?
+        get() = VentMath.calculateSetup(
+            strategy = strategy,
+            weightKg = effectiveWeightKg,
+            weightSourceLabel = weightSourceLabel,
+            customVtMlPerKg = targetVtMlPerKg.toDoubleOrNull()
+        )
+
+    val mechanicsResult: VentMechanicsResult
+        get() = VentMath.analyzeMechanics(
+            cstat = cstat.toDoubleOrNull(),
+            rinsp = rinsp.toDoubleOrNull(),
+            rcexp = rcexp.toDoubleOrNull(),
+            ppeak = ppeak.toDoubleOrNull(),
+            pplat = pplat.toDoubleOrNull(),
+            peep = peep.toDoubleOrNull(),
+            vte = vte.toDoubleOrNull(),
+            autoPeep = autoPeep.toDoubleOrNull(),
+            vLeakPercent = vLeakPercent.toDoubleOrNull(),
+            rr = rr.toDoubleOrNull(),
+            tiSec = tiSec.toDoubleOrNull(),
+            p01 = p01.toDoubleOrNull()
+        )
+}
+
 data class MedicCalcUiState(
     val activeTab: MedicTab = MedicTab.DRIP,
     val isNightMode: Boolean = true,
@@ -204,7 +311,9 @@ data class MedicCalcUiState(
     val oxygen: OxygenUiState = OxygenUiState(),
     val syringe: SyringeUiState = SyringeUiState(),
     val ibw: IbwUiState = IbwUiState(),
-    val gcs: GcsUiState = GcsUiState()
+    val gcs: GcsUiState = GcsUiState(),
+    val abg: AbgUiState = AbgUiState(),
+    val vent: VentUiState = VentUiState()
 )
 
 class MedicCalcViewModel(application: Application) : AndroidViewModel(application) {
@@ -871,6 +980,246 @@ class MedicCalcViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    // --- ABG Actions ---
+    fun setAbgSampleType(sampleType: AbgSampleType) {
+        _uiState.update { it.copy(abg = it.abg.copy(sampleType = sampleType)) }
+    }
+
+    fun applyAbgPreset(preset: AbgPreset) {
+        _uiState.update {
+            it.copy(
+                abg = it.abg.copy(
+                    sampleType = preset.sampleType,
+                    selectedPresetName = preset.name,
+                    ph = preset.ph,
+                    paco2 = preset.paco2,
+                    hco3 = preset.hco3,
+                    pao2 = preset.pao2,
+                    fio2Percent = preset.fio2Percent,
+                    na = preset.na,
+                    cl = preset.cl
+                )
+            )
+        }
+    }
+
+    fun setAbgPh(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(abg = it.abg.copy(ph = clean, selectedPresetName = null)) }
+    }
+
+    fun setAbgPaco2(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(abg = it.abg.copy(paco2 = clean, selectedPresetName = null)) }
+    }
+
+    fun setAbgHco3(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(abg = it.abg.copy(hco3 = clean, selectedPresetName = null)) }
+    }
+
+    fun setAbgPao2(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(abg = it.abg.copy(pao2 = clean, selectedPresetName = null)) }
+    }
+
+    fun setAbgFio2(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(abg = it.abg.copy(fio2Percent = clean, selectedPresetName = null)) }
+    }
+
+    fun setAbgNa(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(abg = it.abg.copy(na = clean, selectedPresetName = null)) }
+    }
+
+    fun setAbgCl(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(abg = it.abg.copy(cl = clean, selectedPresetName = null)) }
+    }
+
+    // --- Vent Actions ---
+    fun setVentSubMode(subMode: VentSubMode) {
+        _uiState.update { it.copy(vent = it.vent.copy(subMode = subMode)) }
+    }
+
+    fun setVentStrategy(strategy: VentStrategy) {
+        _uiState.update { state ->
+            val current = state.vent
+            val useDirect = if (strategy == VentStrategy.PEDIATRIC) true else current.useDirectWeight
+            val defaultDirectKg = if (strategy == VentStrategy.PEDIATRIC && (current.directWeightKg.toDoubleOrNull() ?: 70.0) > 45.0) {
+                "15"
+            } else {
+                current.directWeightKg
+            }
+            state.copy(
+                vent = current.copy(
+                    strategy = strategy,
+                    useDirectWeight = useDirect,
+                    directWeightKg = defaultDirectKg,
+                    targetVtMlPerKg = MedicMath.formatNumber(strategy.defaultVtMlPerKg, 0)
+                )
+            )
+        }
+    }
+
+    fun setVentUseDirectWeight(useDirect: Boolean) {
+        _uiState.update { it.copy(vent = it.vent.copy(useDirectWeight = useDirect)) }
+    }
+
+    fun setVentSex(sex: PatientSex) {
+        _uiState.update { it.copy(vent = it.vent.copy(sex = sex)) }
+    }
+
+    fun setVentHeightUnit(unit: HeightUnit) {
+        _uiState.update { state ->
+            val v = state.vent
+            if (v.heightUnit == unit) return@update state
+            if (unit == HeightUnit.CM) {
+                val totalIn = (v.feet.toDoubleOrNull() ?: 0.0) * 12.0 + (v.inches.toDoubleOrNull() ?: 0.0)
+                val convertedCm = if (totalIn > 0) MedicMath.formatNumber(totalIn * 2.54, 0) else v.cm
+                state.copy(vent = v.copy(heightUnit = unit, cm = convertedCm))
+            } else {
+                val cmVal = v.cm.toDoubleOrNull() ?: 0.0
+                if (cmVal > 0) {
+                    val totalIn = (cmVal / 2.54).toInt()
+                    state.copy(
+                        vent = v.copy(
+                            heightUnit = unit,
+                            feet = (totalIn / 12).toString(),
+                            inches = (totalIn % 12).toString()
+                        )
+                    )
+                } else {
+                    state.copy(vent = v.copy(heightUnit = unit))
+                }
+            }
+        }
+    }
+
+    fun setVentFeet(valStr: String) {
+        val clean = valStr.filter { it.isDigit() }.take(1)
+        _uiState.update { it.copy(vent = it.vent.copy(feet = clean)) }
+    }
+
+    fun setVentInches(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(4)
+        _uiState.update { it.copy(vent = it.vent.copy(inches = clean)) }
+    }
+
+    fun setVentCm(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(vent = it.vent.copy(cm = clean)) }
+    }
+
+    fun setVentDirectWeightKg(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(vent = it.vent.copy(directWeightKg = clean)) }
+    }
+
+    fun setVentTargetVtMlPerKg(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(4)
+        _uiState.update { it.copy(vent = it.vent.copy(targetVtMlPerKg = clean)) }
+    }
+
+    fun syncVentFromIbwTab() {
+        _uiState.update { state ->
+            val ibwState = state.ibw
+            state.copy(
+                vent = state.vent.copy(
+                    useDirectWeight = false,
+                    sex = ibwState.sex,
+                    heightUnit = ibwState.heightUnit,
+                    feet = ibwState.feet,
+                    inches = ibwState.inches,
+                    cm = ibwState.cm
+                )
+            )
+        }
+    }
+
+    fun applyVentMechanicsScenario(scenario: VentMechanicsScenario) {
+        _uiState.update {
+            it.copy(
+                vent = it.vent.copy(
+                    selectedScenarioName = scenario.name,
+                    cstat = scenario.cstat,
+                    rinsp = scenario.rinsp,
+                    rcexp = scenario.rcexp,
+                    ppeak = scenario.ppeak,
+                    pplat = scenario.pplat,
+                    peep = scenario.peep,
+                    vte = scenario.vte,
+                    autoPeep = scenario.autoPeep,
+                    vLeakPercent = scenario.vLeakPercent,
+                    rr = scenario.rr,
+                    tiSec = scenario.tiSec,
+                    p01 = scenario.p01
+                )
+            )
+        }
+    }
+
+    fun setVentCstat(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(vent = it.vent.copy(cstat = clean, selectedScenarioName = null)) }
+    }
+
+    fun setVentRinsp(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(vent = it.vent.copy(rinsp = clean, selectedScenarioName = null)) }
+    }
+
+    fun setVentRcexp(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(vent = it.vent.copy(rcexp = clean, selectedScenarioName = null)) }
+    }
+
+    fun setVentPpeak(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(vent = it.vent.copy(ppeak = clean, selectedScenarioName = null)) }
+    }
+
+    fun setVentPplat(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(vent = it.vent.copy(pplat = clean, selectedScenarioName = null)) }
+    }
+
+    fun setVentPeep(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(vent = it.vent.copy(peep = clean, selectedScenarioName = null)) }
+    }
+
+    fun setVentVte(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(vent = it.vent.copy(vte = clean, selectedScenarioName = null)) }
+    }
+
+    fun setVentAutoPeep(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(vent = it.vent.copy(autoPeep = clean, selectedScenarioName = null)) }
+    }
+
+    fun setVentVLeak(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(5)
+        _uiState.update { it.copy(vent = it.vent.copy(vLeakPercent = clean, selectedScenarioName = null)) }
+    }
+
+    fun setVentRr(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(4)
+        _uiState.update { it.copy(vent = it.vent.copy(rr = clean, selectedScenarioName = null)) }
+    }
+
+    fun setVentTiSec(valStr: String) {
+        val clean = sanitizeDecimal(valStr).take(4)
+        _uiState.update { it.copy(vent = it.vent.copy(tiSec = clean, selectedScenarioName = null)) }
+    }
+
+    fun setVentP01(valStr: String) {
+        val clean = sanitizeSignedDecimal(valStr).take(5)
+        _uiState.update { it.copy(vent = it.vent.copy(p01 = clean, selectedScenarioName = null)) }
+    }
+
     fun clearActiveTab() {
         _uiState.update { state ->
             when (state.activeTab) {
@@ -908,6 +1257,39 @@ class MedicCalcViewModel(application: Application) : AndroidViewModel(applicatio
                 MedicTab.GCS -> state.copy(
                     gcs = state.gcs.copy(eye = null, verbal = null, motor = null)
                 )
+                MedicTab.ABG -> state.copy(
+                    abg = state.abg.copy(
+                        selectedPresetName = null,
+                        ph = "",
+                        paco2 = "",
+                        hco3 = "",
+                        pao2 = "",
+                        fio2Percent = "",
+                        na = "",
+                        cl = ""
+                    )
+                )
+                MedicTab.VENT -> state.copy(
+                    vent = if (state.vent.subMode == VentSubMode.SETUP) {
+                        state.vent.copy(feet = "", inches = "", cm = "", directWeightKg = "")
+                    } else {
+                        state.vent.copy(
+                            selectedScenarioName = null,
+                            cstat = "",
+                            rinsp = "",
+                            rcexp = "",
+                            ppeak = "",
+                            pplat = "",
+                            peep = "",
+                            vte = "",
+                            autoPeep = "",
+                            vLeakPercent = "",
+                            rr = "",
+                            tiSec = "",
+                            p01 = ""
+                        )
+                    }
+                )
             }
         }
     }
@@ -936,5 +1318,12 @@ class MedicCalcViewModel(application: Application) : AndroidViewModel(applicatio
             val after = filtered.substring(firstDot + 1).replace(".", "")
             (before + after).take(8)
         }
+    }
+
+    private fun sanitizeSignedDecimal(input: String): String {
+        val trimmed = input.trim()
+        val isNegative = trimmed.startsWith("-")
+        val digits = sanitizeDecimal(trimmed.removePrefix("-"))
+        return if (isNegative) "-$digits" else digits
     }
 }

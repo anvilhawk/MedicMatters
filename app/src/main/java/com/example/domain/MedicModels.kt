@@ -5,7 +5,9 @@ enum class MedicTab(val label: String) {
     OXYGEN("O2 Tank"),
     SYRINGE("Syringe"),
     IBW("IBW"),
-    GCS("GCS")
+    GCS("GCS"),
+    ABG("ABG"),
+    VENT("Vent")
 }
 
 enum class DripMode(val label: String) {
